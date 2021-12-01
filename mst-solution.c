@@ -85,7 +85,7 @@ void compute_mst(
     int *adj,
     char *algo_name)
 {
-  int VERBOSE = 1;
+  int VERBOSE = 0;
   int proc_rank = 0, nb_procs = 0;
   int mst = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
@@ -218,18 +218,17 @@ void compute_mst(
     //  initialised to 0, and set value to 1 if vertex is added to set.
     int *added = calloc(N, sizeof(int));
     int *leaders = calloc(N, sizeof(int));
-    int *v1 = calloc(M, sizeof(int));
-    int *v2 = calloc(M, sizeof(int));
-    int *weights = calloc(M, sizeof(int));
+
+    int *edges = calloc(3 * M, sizeof(int));
     int **loc = calloc(M, sizeof(int *)); // initialise array of pointers
-    int *ptr = weights, *ptr1 = v1, *ptr2 = v2;
+    int *ptr = edges;                     //, *ptr1 = v1, *ptr2 = v2;
     int idx;
     int i;
     int w, t1, t2;
     int count = 0; // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
 
     // todo: check all pointers are allocated properly
-    if (v1 == NULL)
+    if (edges == NULL)
     {
       fprintf(stderr, "malloc failed\n");
     }
@@ -252,14 +251,14 @@ void compute_mst(
           // update and increment
           loc[count] = ptr; // edge address
           *ptr++ = w;       // weights
-          *ptr1++ = i;      // v1
-          *ptr2++ = j;      // v2
+          *ptr++ = i;       // v1
+          *ptr++ = j;       // v2
           count++;
         }
       }
     }
 
-    print_array(weights, count, VERBOSE);
+    print_array(edges, 3 * count, VERBOSE);
 
     if (VERBOSE > 0)
     {
@@ -281,17 +280,20 @@ void compute_mst(
       puts("After sorting:");
       for (i = 0; i < count; i++)
       {
-        printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - weights));
+        printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - edges));
       }
     }
 
     // End of initialisation, now run through sorted edges
+
+    // KRUSKAL
+
     for (i = 0; i < count; i++)
     {
-      idx = loc[i] - weights;
-      w = weights[idx];
-      t1 = v1[idx]; // t1 < t2
-      t2 = v2[idx];
+      idx = loc[i] - edges;
+      w = edges[idx];
+      t1 = edges[idx + 1]; // t1 < t2
+      t2 = edges[idx + 2];
 
       if (VERBOSE > 0)
       {
@@ -345,9 +347,7 @@ void compute_mst(
 
     // end kruskal
 
-    free(v1);
-    free(v2);
-    free(weights);
+    free(edges);
     free(loc);
 
     //////
