@@ -14,7 +14,7 @@ int previous_candidate(int min_weight)
   return min_weight != 10;
 }
 
-int get_leader(int *parent_array, int elem)
+int find_set(int *parent_array, int elem)
 {
   // TODO: CAN MAKE MORE EFFICIENT BY UPDATING POINTER
   // EACH TIME WE GET LEADER.  MAKES TREE MUCH SHALLOWER
@@ -25,14 +25,15 @@ int get_leader(int *parent_array, int elem)
   }
   else
   {
-    return get_leader(parent_array, parent);
+    return find_set(parent_array, parent);
   }
 }
-void make_set(int *parents_array, int t1, int t2)
+void union_sets(int *parents_array, int t1, int t2)
 {
-  int l1 = get_leader(parents_array, t1);
-  int l2 = get_leader(parents_array, t2);
-  parents_array[l1] = l2;
+  // usually have t1 < t2, so join sets to lower numbers
+  int l1 = find_set(parents_array, t1);
+  int l2 = find_set(parents_array, t2);
+  parents_array[l2] = l1;
 }
 void print_array(int *arr, int count, int log_level)
 {
@@ -50,13 +51,7 @@ void add_edge(int e1, int e2)
 {
   printf("%d %d\n", e1, e2);
 }
-void kruskal(int *edge_list, int M, int *vertex_list, int N)
-{
-  for (int i = 0; i < N; i++)
-  {
-    edge_list[3 * i + 2] = 5; // set all weights to 5
-  }
-}
+
 int deref_pointer(const void *v1, const void *v2)
 {
   const int i1 = **(const int **)v1;
@@ -67,6 +62,103 @@ int deref_pointer(const void *v1, const void *v2)
 void sort_array(int **loc, int count)
 {
   qsort(loc, count, sizeof loc, deref_pointer);
+}
+
+int VERBOSE = 0;
+void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N)
+{
+  // adjancency matrix is symmetric, so only consider upper
+  // triangular part
+  int *ptr = edges; //, *ptr1 = v1, *ptr2 = v2;
+  int i, j, w;
+  int count = 0;
+  for (i = 0; i < N; i++)
+  {
+    for (j = i + 1; j < N; j++)
+    {
+      w = adj[i * N + j];
+      if (has_edge(w))
+      {
+        // update and increment
+        loc[count] = ptr; // edge address
+        *ptr++ = w;       // weights
+        *ptr++ = i;       // v1
+        *ptr++ = j;       // v2
+        count++;
+      }
+    }
+  }
+
+  print_array(edges, 3 * count, 0);
+
+  if (VERBOSE > 0)
+  {
+    puts("Before sorting:");
+    for (i = 0; i < count; i++)
+    {
+      printf("value: %-6d adress: %p\n", *loc[i], loc[i]);
+    }
+  }
+  // read through code
+  // pointer to pointer is useful to give location of a result,
+  // since we can only pass by value
+
+  // edge order
+  sort_array(loc, count);
+
+  if (VERBOSE > 0)
+  {
+    puts("After sorting:");
+    for (i = 0; i < count; i++)
+    {
+      printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - edges));
+    }
+  }
+
+  *ret = count;
+}
+
+void kruskal(int *out_buf, int edge_count, int *edges, int **loc, int N, int *vertices_to_include)
+{
+  int *leaders = calloc(N, sizeof(int));
+  int idx, i, w;
+  int mst = 0;
+
+  for (int i = 0; i < N; i++)
+  {
+    leaders[i] = i;
+  }
+  int *added = calloc(N, sizeof(int));
+  int t1, t2, l1, l2;
+  for (i = 0; i < edge_count; i++)
+  {
+    idx = loc[i] - edges;
+    w = edges[idx];
+    t1 = edges[idx + 1]; // t1 < t2
+    t2 = edges[idx + 2];
+
+    l1 = find_set(leaders, t1);
+    l2 = find_set(leaders, t2);
+
+    if (l1 != l2)
+    {
+      // different set, add edge to combine sets
+      add_edge(t1, t2);
+      // combine sets
+      union_sets(leaders, t1, t2);
+      // add vertices
+      added[t1] = 1;
+      added[t2] = 1;
+      mst += w;
+    }
+    else
+    {
+      // Edge from %d to %d in same set with leader %d.  Ignore
+    }
+  }
+
+  printf("MST has weight %d\n", mst);
+  free(added);
 }
 
 int get_global_id(int local_id, int vertices_per_proc, int proc_rank)
@@ -85,7 +177,6 @@ void compute_mst(
     int *adj,
     char *algo_name)
 {
-  int VERBOSE = 0;
   int proc_rank = 0, nb_procs = 0;
   int mst = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
@@ -219,10 +310,7 @@ void compute_mst(
 
     int *edges = calloc(3 * M, sizeof(int));
     int **loc = calloc(M, sizeof(int *)); // initialise array of pointers
-    int *ptr = edges;                     //, *ptr1 = v1, *ptr2 = v2;
-    int idx;
-    int i, j, w;
-    int count = 0; // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
+    int count = 0;                        // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
 
     // todo: check all pointers are allocated properly
     if (edges == NULL)
@@ -230,52 +318,7 @@ void compute_mst(
       fprintf(stderr, "malloc failed\n");
     }
 
-    // adjancency matrix is symmetric, so only consider upper
-    // triangular part
-    for (i = 0; i < N; i++)
-    {
-      for (j = i + 1; j < N; j++)
-      {
-        w = adj[i * N + j];
-        if (has_edge(w))
-        {
-          // update and increment
-          loc[count] = ptr; // edge address
-          *ptr++ = w;       // weights
-          *ptr++ = i;       // v1
-          *ptr++ = j;       // v2
-          count++;
-        }
-      }
-    }
-
-    print_array(edges, 3 * count, VERBOSE);
-
-    if (VERBOSE > 0)
-    {
-      puts("Before sorting:");
-      for (i = 0; i < count; i++)
-      {
-        printf("value: %-6d adress: %p\n", *loc[i], loc[i]);
-      }
-    }
-    // read through code
-    // pointer to pointer is useful to give location of a result,
-    // since we can only pass by value
-
-    // edge order
-    sort_array(loc, count);
-
-    if (VERBOSE > 0)
-    {
-      puts("After sorting:");
-      for (i = 0; i < count; i++)
-      {
-        printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - edges));
-      }
-    }
-
-    // End of initialisation, now run through sorted edges
+    create_edge_list(&count, edges, loc, adj, N);
 
     int *vertices_to_include = calloc(N, sizeof(int));
 
@@ -285,74 +328,7 @@ void compute_mst(
       vertices_to_include[i] = 1;
     }
 
-    // KRUSKAL
-
-    // void kruskal(*out_buf, *edges, *edge_count, N, *vertices_to_include);
-    // initialize leaders to point to self
-    int *leaders = calloc(N, sizeof(int));
-    for (int i = 0; i < N; i++)
-    {
-      leaders[i] = i;
-    }
-    int *added = calloc(N, sizeof(int));
-    int t1, t2, l1, l2;
-    for (i = 0; i < count; i++)
-    {
-      idx = loc[i] - edges;
-      w = edges[idx];
-      t1 = edges[idx + 1]; // t1 < t2
-      t2 = edges[idx + 2];
-
-      if (VERBOSE > 0)
-      {
-        printf("Considering vertex of weight %d from %d to %d\n", w, t1, t2);
-      }
-
-      l1 = get_leader(leaders, t1);
-      l2 = get_leader(leaders, t2);
-
-      if (l1 != l2)
-      {
-        // TODO: if both t1 and t2 already in set, no need to add edge as it's already
-        // spanned.  If either of t1/t2 in set, edd edge and do a set union with other set
-        // If neither in set yet, we create a new set which includes the two vertices
-        mst += w;
-        added[t1] = 1;
-        added[t2] = 1;
-        make_set(leaders, t1, t2);
-        add_edge(t1, t2);
-
-        if (added[t1] == 1 && added[t2] == 1)
-        {
-          if (VERBOSE > 0)
-          {
-            printf(" Neither %d or %d added, adding edge", t1, t2);
-          }
-        }
-        else
-        {
-
-          // add edge to set
-          if (VERBOSE > 0)
-          {
-            printf(" Disjoint sets, adding edge from %d to %d with leaders %d and %d\n", t1, t2, l1, l2);
-          }
-          // should this be other way around too?
-          // nope, need to point the leader of t2 to be l1
-        }
-      }
-      else
-      {
-        if (VERBOSE > 0)
-        {
-          printf(" Edge from %d to %d in same set with leaders %d and %d.  Discarding...\n", t1, t2, l1, l2);
-        }
-      }
-    }
-
-    printf("MST has weight %d\n", mst);
-    free(added);
-    // end kruskal
+    kruskal(NULL, count, edges, loc, N, vertices_to_include);
 
     free(edges);
     free(loc);
@@ -502,10 +478,10 @@ void compute_mst(
     // BEGIN IMPLEMENTATION HERE
     // TEST merge
     // N = 5, M=5
-    int V[5] = {0, 1, 2, 3, 4};
+    // int V[5] = {0, 1, 2, 3, 4};
     int e[15] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4, 3, 4, 2}; // tuple (v1,v2,w)
     // in-place modification of e:
-    kruskal(e, 5, V, 5);
+    // kruskal(e, 5, V, 5);
     for (int i = 0; i < 15; i++)
     {
       printf("%d ", e[i]);
