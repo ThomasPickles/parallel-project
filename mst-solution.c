@@ -50,6 +50,13 @@ void add_edge(int e1, int e2)
 {
   printf("%d %d\n", e1, e2);
 }
+void kruskal(int *edge_list, int M, int *vertex_list, int N)
+{
+  for (int i = 0; i < N; i++)
+  {
+    edge_list[3 * i + 2] = 5; // set all weights to 5
+  }
+}
 int deref_pointer(const void *v1, const void *v2)
 {
   const int i1 = **(const int **)v1;
@@ -57,25 +64,11 @@ int deref_pointer(const void *v1, const void *v2)
   return i1 < i2 ? -1 : (i1 > i2);
 }
 
-void sort_array(int **buf, int *arr, int count)
+void sort_array(int **loc, int count)
 {
-
-  int i;
-  printf("Array of values:\n ");
-  for (i = 0; i < count; i++)
-    printf("%d ", arr[i]);
-
-  printf("Array of pointers:\n ");
-  for (i = 0; i < count; i++)
-  {
-    printf("%p ", buf[i]);
-    buf[i] = &arr[i];
-  }
-  // qsort(buf, count, sizeof *buf, deref_pointer);
-
-  // for (i = 0; i < count; i++)
-  //   printf("%d ", arr[i]);
+  qsort(loc, count, sizeof loc, deref_pointer);
 }
+
 int get_global_id(int local_id, int vertices_per_proc, int proc_rank)
 {
   return local_id + vertices_per_proc * proc_rank;
@@ -92,17 +85,16 @@ void compute_mst(
     int *adj,
     char *algo_name)
 {
-  int VERBOSE = 0;
+  int VERBOSE = 1;
   int proc_rank = 0, nb_procs = 0;
+  int mst = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nb_procs);
 
-  int lowest_weight[5] = {10, 10, 10, 10, 10};
-  int vertices[5] = {4, 0, 3, 1, 2}; // Start with 4
-  int v, min_key, weight;
-  int abs_lowest = 100;
-  int *last_added = vertices, *ptr = NULL, *back = NULL;
-  int mst = 0;
+  // todo: interesting idea is assigning "levels" for the edges,
+  // BRANCH, REJECTED, BASIC, so we can mark the rejected eges
+  // and the unseen ones
+
   // TODO: CONVERT INTs TO UNSIGNED INT
   if (strcmp(algo_name, "prim-seq") == 0)
   { // Sequential Prim's algorithm
@@ -117,6 +109,11 @@ void compute_mst(
     // adjacency matrix size N**2
     // accordingly might not be feasible to convert to binary heap as this
     // requires adjacency list representation
+    int lowest_weight[5] = {10, 10, 10, 10, 10};
+    int vertices[5] = {4, 0, 3, 1, 2}; // Start with 4
+    int v, min_key, weight;
+    int abs_lowest = 100;
+    int *last_added = vertices, *ptr = NULL, *back = NULL;
 
     for (int vertex_count = 1; vertex_count < 5; vertex_count++)
     {
@@ -225,62 +222,44 @@ void compute_mst(
     int *v2 = calloc(M, sizeof(int));
     int *weights = calloc(M, sizeof(int));
     int **loc = calloc(M, sizeof(int *)); // initialise array of pointers
+    int *ptr = weights, *ptr1 = v1, *ptr2 = v2;
+    int idx;
+    int i;
     int w, t1, t2;
     int count = 0; // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
 
+    // todo: check all pointers are allocated properly
     if (v1 == NULL)
     {
       fprintf(stderr, "malloc failed\n");
     }
 
+    // initialize leaders to point to self
     for (int i = 0; i < N; i++)
     {
-      // initialize leaders to point to self
       leaders[i] = i;
     }
 
-    ptr = weights;
-    int *ptr1 = v1, *ptr2 = v2;
     // adjancency matrix is symmetric, so only consider upper
     // triangular part
     for (int i = 0; i < N; i++)
     {
       for (int j = i + 1; j < N; j++)
       {
-        weight = adj[i * N + j];
-        if (has_edge(weight))
+        w = adj[i * N + j];
+        if (has_edge(w))
         {
-          count++;
           // update and increment
-          *ptr++ = weight;
-          *ptr1++ = i;
-          *ptr2++ = j;
+          loc[count] = ptr; // edge address
+          *ptr++ = w;       // weights
+          *ptr1++ = i;      // v1
+          *ptr2++ = j;      // v2
+          count++;
         }
       }
     }
 
-    // edge order
-    // sort_array(&order, weights, 10);
-
-    if (loc == NULL)
-    {
-      fprintf(stderr, "malloc failed\n");
-    }
-
-    if (count > 10)
-    {
-      printf("Array too small, aborting...");
-      return;
-    }
-
     print_array(weights, count, VERBOSE);
-
-    int idx;
-    int i;
-    for (i = 0; i < count; i++)
-    {
-      loc[i] = &(weights[i]); // edge address
-    }
 
     if (VERBOSE > 0)
     {
@@ -294,8 +273,8 @@ void compute_mst(
     // pointer to pointer is useful to give location of a result,
     // since we can only pass by value
 
-    // loc is pointer to first elem
-    qsort(loc, count, sizeof loc, deref_pointer);
+    // edge order
+    sort_array(loc, count);
 
     if (VERBOSE > 0)
     {
@@ -306,6 +285,7 @@ void compute_mst(
       }
     }
 
+    // End of initialisation, now run through sorted edges
     for (i = 0; i < count; i++)
     {
       idx = loc[i] - weights;
@@ -360,7 +340,11 @@ void compute_mst(
         }
       }
     }
+
     printf("MST has weight %d\n", mst);
+
+    // end kruskal
+
     free(v1);
     free(v2);
     free(weights);
@@ -509,6 +493,26 @@ void compute_mst(
   else if (strcmp(algo_name, "kruskal-par") == 0)
   { // Parallel Kruskal's algorithm
     // BEGIN IMPLEMENTATION HERE
+    // TEST merge
+    // N = 5, M=5
+    int V[5] = {0, 1, 2, 3, 4};
+    int e[15] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4, 3, 4, 2}; // tuple (v1,v2,w)
+    // in-place modification of e:
+    kruskal(e, 5, V, 5);
+    for (int i = 0; i < 15; i++)
+    {
+      printf("%d ", e[i]);
+    }
+    // V1 = [ 1, 1, 1, 0, 0 ]; // vertices {0,1,2};
+    // V2 = [ 0, 1, 0, 1, 1 ]; // vertices {1,3,4};
+    // e1 = {0, 1, 2, 1, 2, 3};
+    // e2 = {1, 3, 4, 3, 4, 2};
+    // // output
+    // V = [ 1, 1, 1, 1, 1 ];
+    // e = {0, 1, 2, 0, 3, 1, 1, 2, 3, 3, 4, 2};
+    // merge might be easier than expected, just need to run Kruskal
+    // if intersection (V1, V2)
+    //   is empty : add lowest weight u, v edge with u in V1 and v in V2 if | intersection(V1, V2) > 1 | : remove common edges
   }
   else
   { // Invalid algorithm name
