@@ -216,15 +216,12 @@ void compute_mst(
 
     // To check for set membership for vertices, just keep an array of length N
     //  initialised to 0, and set value to 1 if vertex is added to set.
-    int *added = calloc(N, sizeof(int));
-    int *leaders = calloc(N, sizeof(int));
 
     int *edges = calloc(3 * M, sizeof(int));
     int **loc = calloc(M, sizeof(int *)); // initialise array of pointers
     int *ptr = edges;                     //, *ptr1 = v1, *ptr2 = v2;
     int idx;
-    int i;
-    int w, t1, t2;
+    int i, j, w;
     int count = 0; // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
 
     // todo: check all pointers are allocated properly
@@ -233,17 +230,11 @@ void compute_mst(
       fprintf(stderr, "malloc failed\n");
     }
 
-    // initialize leaders to point to self
-    for (int i = 0; i < N; i++)
-    {
-      leaders[i] = i;
-    }
-
     // adjancency matrix is symmetric, so only consider upper
     // triangular part
-    for (int i = 0; i < N; i++)
+    for (i = 0; i < N; i++)
     {
-      for (int j = i + 1; j < N; j++)
+      for (j = i + 1; j < N; j++)
       {
         w = adj[i * N + j];
         if (has_edge(w))
@@ -286,8 +277,25 @@ void compute_mst(
 
     // End of initialisation, now run through sorted edges
 
+    int *vertices_to_include = calloc(N, sizeof(int));
+
+    // do for all vertices
+    for (int i = 0; i < N; i++)
+    {
+      vertices_to_include[i] = 1;
+    }
+
     // KRUSKAL
 
+    // void kruskal(*out_buf, *edges, *edge_count, N, *vertices_to_include);
+    // initialize leaders to point to self
+    int *leaders = calloc(N, sizeof(int));
+    for (int i = 0; i < N; i++)
+    {
+      leaders[i] = i;
+    }
+    int *added = calloc(N, sizeof(int));
+    int t1, t2, l1, l2;
     for (i = 0; i < count; i++)
     {
       idx = loc[i] - edges;
@@ -300,7 +308,6 @@ void compute_mst(
         printf("Considering vertex of weight %d from %d to %d\n", w, t1, t2);
       }
 
-      int l1, l2;
       l1 = get_leader(leaders, t1);
       l2 = get_leader(leaders, t2);
 
@@ -344,7 +351,7 @@ void compute_mst(
     }
 
     printf("MST has weight %d\n", mst);
-
+    free(added);
     // end kruskal
 
     free(edges);
