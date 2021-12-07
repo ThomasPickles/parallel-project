@@ -39,8 +39,20 @@ void print_array(int *arr, int count, int log_level)
 {
   if (log_level > 0)
   {
-    printf("[");
-    for (int i = 0; i < count - 1; i++)
+    printf("stat:[");
+    for (int i = 0; i < count - 3; i = i + 3)
+    {
+      printf("%d,", arr[i]);
+    }
+    printf("%d]\n", arr[count - 3]);
+    printf("weig:[");
+    for (int i = 1; i < count - 3; i = i + 3)
+    {
+      printf("%d,", arr[i]);
+    }
+    printf("%d]\n", arr[count - 2]);
+    printf("edge:[");
+    for (int i = 2; i < count - 1; i = i + 3)
     {
       printf("%d,", arr[i]);
     }
@@ -49,7 +61,10 @@ void print_array(int *arr, int count, int log_level)
 }
 void add_edge(int e1, int e2)
 {
-  printf("%d %d\n", e1, e2);
+  int min, max;
+  min = e1 < e2 ? e1 : e2;
+  max = e1 < e2 ? e2 : e1;
+  printf("%d %d\n", min, max);
 }
 
 int deref_pointer(const void *v1, const void *v2)
@@ -62,6 +77,31 @@ int deref_pointer(const void *v1, const void *v2)
 void sort_array(int **loc, int count)
 {
   qsort(loc, count, sizeof loc, deref_pointer);
+}
+
+int is_better_edge(int candidate_w, int best_w, int candidate_1, int candidate_2, int best_1, int best_2)
+{
+  if (candidate_w == 0)
+    return 0; // not an edge
+  if (best_w == 0)
+    return 1; // no competition
+  if (candidate_w > best_w)
+    return 0;
+  if (candidate_w < best_w)
+    return 1;
+  // same weight, so break ties with lexicographical order
+  int best_low, best_high, candidate_low, candidate_high;
+  best_low = best_1 < best_2 ? best_1 : best_2;
+  best_high = best_1 < best_2 ? best_2 : best_1;
+  candidate_low = candidate_1 < candidate_2 ? candidate_1 : candidate_2;
+  candidate_high = candidate_1 < candidate_2 ? candidate_2 : candidate_1;
+  if (candidate_low < best_low)
+    return 1;
+  if (candidate_low > best_low)
+    return 0;
+  if (candidate_high < best_high)
+    return 1;
+  return 0;
 }
 
 int VERBOSE = 0;
@@ -157,8 +197,70 @@ void kruskal(int *out_buf, int edge_count, int *edges, int **loc, int N, int *ve
     }
   }
 
-  printf("MST has weight %d\n", mst);
   free(added);
+  free(leaders);
+}
+
+void update_mins_for_vertices(int *vertices, int *adj, int last_added, int N)
+{
+
+  int w, min_weight, status;
+  // Update mins for each vertex
+  for (int v = 0; v < N; v++)
+  {
+    min_weight = 0;
+    status = vertices[3 * v];
+    if (status != 2)
+    {
+      // no point adding a frond edge
+      w = adj[last_added + v * N];
+      min_weight = vertices[3 * v + 1];
+      if (is_better_edge(w, min_weight, v, last_added, v, vertices[3 * v + 2]))
+      {
+        if (v != last_added)
+        { // no self-loops
+          vertices[3 * v] = 1;
+          vertices[3 * v + 1] = w;
+          vertices[3 * v + 2] = last_added;
+        }
+      }
+    }
+  }
+}
+
+void get_abs_min(int *last_added, int *vertices, int N)
+{
+  // Get absolute min
+  // find the absolute lowest weight among candidate edges
+  // TODO: possible optimisation:
+  // might be better to keep an "adjacency set to iterate over", rahter than reading
+  // the vertices array again.  Although this is only really a O(N) step, so probably
+  // not a big deal
+
+  int u, v, w, w_min = 0, u_min = 0, v_min = 0, status;
+  for (v = 0; v < N; v++)
+  {
+    status = vertices[3 * v];
+    if (status != 2)
+    {
+      w = vertices[3 * v + 1];
+      u = vertices[3 * v + 2];
+      if (is_better_edge(w, w_min, u, v, u_min, v_min))
+      {
+        // update min
+        v_min = v;
+        u_min = u;
+        w_min = w;
+      }
+    }
+  }
+
+  add_edge(u_min, v_min);
+
+  // remove edge as candidate
+  vertices[3 * v_min] = 2;
+  vertices[3 * v_min + 1] = 0;
+  *last_added = v_min;
 }
 
 int get_global_id(int local_id, int vertices_per_proc, int proc_rank)
@@ -166,11 +268,6 @@ int get_global_id(int local_id, int vertices_per_proc, int proc_rank)
   return local_id + vertices_per_proc * proc_rank;
 }
 
-int not_in_tree(int local_id, int vertices_per_proc, int proc_rank, int *added)
-{
-  int id = get_global_id(local_id, vertices_per_proc, proc_rank);
-  return *(added + id) == 0;
-}
 void compute_mst(
     int N,
     int M,
@@ -181,6 +278,8 @@ void compute_mst(
   int mst = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nb_procs);
+
+  // TODO: HANDLE CASE WHERE N MOD P != 0
 
   // todo: interesting idea is assigning "levels" for the edges,
   // BRANCH, REJECTED, BASIC, so we can mark the rejected eges
@@ -200,97 +299,26 @@ void compute_mst(
     // adjacency matrix size N**2
     // accordingly might not be feasible to convert to binary heap as this
     // requires adjacency list representation
-    int lowest_weight[5] = {10, 10, 10, 10, 10};
-    int vertices[5] = {4, 0, 3, 1, 2}; // Start with 4
-    int v, min_key, weight;
-    int abs_lowest = 100;
-    int *last_added = vertices, *ptr = NULL, *back = NULL;
+    int start_vertex = 0;
+    int *vertices = calloc(3 * N, sizeof(int));
+    int last_added = start_vertex;
 
-    for (int vertex_count = 1; vertex_count < 5; vertex_count++)
+    // (added, min_weight_edge, to_vertex)
+    for (int i = 0; i < N; i++)
+    {
+      // 0 - unseen; 1 - adjacent; 2 - added
+      vertices[3 * i] = 0;      // not added
+      vertices[3 * i + 1] = 0;  // min weight
+      vertices[3 * i + 2] = -1; // key
+    }
+
+    vertices[2 * last_added] = 2;
+
+    for (int vertex_count = 1; vertex_count < N; vertex_count++)
     {
 
-      printf("Starting array [");
-      for (int i = 0; i < 5; i++)
-      {
-        printf("%d,", vertices[i]);
-      }
-      printf("]\n");
-      printf("Considering edges from vertex %d\n", *last_added);
-
-      // pointer arithmetic allows us only to look at elements in the
-      // candidate set, no need to look at edge weights for any vertices
-      // that are not connected
-      ptr = last_added + 1;
-      back = vertices + 5; // beyond last elem
-      while (ptr != back)
-      {
-        v = *ptr;
-        weight = adj[*last_added + v * N];
-
-        printf(" Edge weight for vertex (%d,%d) is %d\n", *last_added, v, weight);
-
-        if (previous_candidate(lowest_weight[v]))
-        {
-          printf("  Vertex %d has been a candidate before with weight %d\n", v, lowest_weight[v]);
-          if (has_edge(weight) && weight < lowest_weight[v])
-          {
-            printf("   Found an edge for %d with weight %d\n", v, weight);
-            // we've found a lower weight edge, update it
-            // update weight
-            // 0: inf -> 1; 1: inf -> 5; 2: inf -> 1
-            printf("   Update weight for vertex %d: %d -> %d\n", v, lowest_weight[v], weight);
-            lowest_weight[v] = weight;
-          }
-          ptr++;
-        }
-        else
-        {
-
-          printf(" Vertex %d not previously a candidate for inclusion...\n", v);
-          if (has_edge(weight))
-          {
-            printf("  Vertex %d now a candidate with edge weight %d\n", v, weight);
-            // it's now a candidate, set its value
-            lowest_weight[v] = weight;
-            ptr++;
-          }
-          else
-          {
-            printf("  Vertex %d still not a candidate\n", v);
-            // it's still not a candidate, swap with unseen elem at back
-            // swap elems, but don't disturb pointers
-            back--;
-            printf("  Elem %d to back and %d to front\n", v, *back);
-            *ptr = *back;
-            *back = v;
-          }
-        }
-      }
-
-      printf("Candidate edges from all added %d\n", *last_added);
-
-      ptr = last_added + 1;
-      min_key = *ptr;
-      abs_lowest = 10;
-      while (ptr != back)
-      {
-        v = *ptr;
-        printf(" Candidate %d, weight %d\n", v, lowest_weight[v]);
-
-        if (lowest_weight[v] < abs_lowest)
-        {
-          min_key = v;
-          abs_lowest = lowest_weight[v];
-        }
-        ptr++;
-      }
-
-      printf("Lowest weight candidate %d with weight %d, adding to set\n", min_key, abs_lowest);
-
-      last_added++;
-      *last_added = min_key;
-      mst += abs_lowest;
-      printf("Value of mst is %d\n\n", mst);
+      update_mins_for_vertices(vertices, adj, last_added, N);
+      get_abs_min(&last_added, vertices, N);
     }
   }
   else if (strcmp(algo_name, "kruskal-seq") == 0)
@@ -345,13 +373,13 @@ void compute_mst(
     }
     int root = 0;
     int nb_loc = N / nb_procs;
-    int start_vertex = 1; // less than nb_loc
+    int start_vertex = 0; // less than nb_loc
     int *added = calloc(N, sizeof(int));
     int *min_weight = calloc(nb_loc, sizeof(int));
-    int *key = calloc(nb_loc, sizeof(int));
-    int *gather_mins = calloc(3 * nb_procs, sizeof(int));
+
+    int *vertices = calloc(3 * nb_procs, sizeof(int));
     int proc_min[3] = {0};
-    int i, edge, next, v_i; //
+    int i, w, next, v_i; //
 
     if (proc_rank == root)
     {
@@ -401,23 +429,22 @@ void compute_mst(
             // don't include self loops,
             continue;
 
-          edge = adj[v_j + i * N];
-          if (edge == 0)
+          w = adj[v_j + i * N];
+          if (w == 0)
             continue; // only want edges
 
-          if (edge < min_weight[i] || min_weight[i] == 0) // and edge is lower weight
+          if (w < min_weight[i] || min_weight[i] == 0) // and edge is lower weight
           {
             // update its key
-            min_weight[i] = edge;
-            key[i] = v_j;
+            min_weight[i] = w;
             // TODO: feels costly to check whether we've set the proc_min
             // to zero every time, since we just want to do it once
             // for the first edge we find
             // then, if it's the lowest weight yet seen by process
-            if (edge < proc_min[0] || proc_min[0] == 0)
+            if (w < proc_min[0] || proc_min[0] == 0)
             {
               // printf("lower weight edge R%dP%d %d:%d-%d\n", vertex_count, proc_rank, edge, v_i, v_j);
-              proc_min[0] = edge;
+              proc_min[0] = w;
               // Put into lexicographic order
               proc_min[1] = v_i < v_j ? v_i : v_j;
               proc_min[2] = v_i < v_j ? v_j : v_i;
@@ -425,51 +452,37 @@ void compute_mst(
           }
         }
       }
-      // printf("\nP%d: %d:%d-%d\n", proc_rank, proc_min[0], proc_min[1], proc_min[2]);
-      // for (i = 0; i < nb_loc; i++)
-      // {
-      //   printf("%d ", min_weight[i]);
-      // }
       // send mins back to root
       // TODO: can just do a reduce here, as we can discard any
       // values that are less than the minimum
-      MPI_Gather(&proc_min, 3, MPI_INT, gather_mins, 3, MPI_INT, root, MPI_COMM_WORLD);
+      MPI_Gather(&proc_min, 3, MPI_INT, vertices, 3, MPI_INT, root, MPI_COMM_WORLD);
 
       if (proc_rank == root)
       {
-        // printf("Round 1, Expect \n3 0 1 1 1 3 5 1 5\n");
-        // for (int i = 0; i < 3 * nb_procs; i++)
-        // {
-        //   printf("%d ", gather_mins[i]);
-        // }
         // todo: take this decl out of loop
-        int min[3] = {0, 0, 0};
+        int w_min = 0, u_min = 0, v_min = 0;
+        int w, u, v;
         for (int i = 0; i < nb_procs; i++)
         {
-          if (gather_mins[3 * i] > 0)
+          w = vertices[3 * i];
+          u = vertices[3 * i + 1];
+          v = vertices[3 * i + 2];
+          if (is_better_edge(w, w_min, u, v, u_min, v_min))
           {
-            if (min[0] == 0 ||
-                (gather_mins[3 * i] < min[0]) ||
-                ((gather_mins[3 * i] == min[0]) && (gather_mins[3 * i + 1] < min[1])) ||
-                ((gather_mins[3 * i] == min[0]) && (gather_mins[3 * i + 1] == min[1]) && (gather_mins[3 * i + 2] < min[2])))
-            {
-              // printf("Edge %d %d, w %d \n", next, gather_mins[1], gather_mins[2]);
-
-              min[0] = gather_mins[3 * i];
-              min[1] = gather_mins[3 * i + 1];
-              min[2] = gather_mins[3 * i + 2];
-            }
+            w_min = w;
+            u_min = u;
+            v_min = v;
           }
         }
-        if (added[min[1]])
+        if (added[u_min])
         {
-          next = min[2];
+          next = v_min;
         }
         else
         {
-          next = min[1];
+          next = u_min;
         }
-        printf("%d %d\n", min[1], min[2]);
+        add_edge(u_min, v_min);
       }
     }
   }
