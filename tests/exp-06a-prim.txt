@@ -1,0 +1,6 @@
+0 5
+1 5
+1 2
+1 3
+3 4
+compute_mst took 2.765656e-05 seconds.

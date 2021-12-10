@@ -275,7 +275,6 @@ void compute_mst(
     char *algo_name)
 {
   int proc_rank = 0, nb_procs = 0;
-  int mst = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nb_procs);
 
@@ -372,14 +371,15 @@ void compute_mst(
       return;
     }
     int root = 0;
-    int nb_loc = N / nb_procs;
-    int start_vertex = 0; // less than nb_loc
+    int q = N / nb_procs;
+    int start_vertex = 0; // less than q
+    // shared among all processes
     int *added = calloc(N, sizeof(int));
-    int *min_weight = calloc(nb_loc, sizeof(int));
+    int *min_weight = calloc(q, sizeof(int));
 
     int *vertices = calloc(3 * nb_procs, sizeof(int));
     int proc_min[3] = {0};
-    int i, w, next, v_i; //
+    int i, u, w, next, v; //
 
     if (proc_rank == root)
     {
@@ -391,7 +391,6 @@ void compute_mst(
       MPI_Bcast(&next, 1, MPI_INT, root, MPI_COMM_WORLD);
 
       // add to set
-      // printf("Adding %d to set\n", next);
       added[next] = 1;
 
       // get minimum for process, do on all processes
@@ -403,33 +402,33 @@ void compute_mst(
       proc_min[1] = 0;
       proc_min[2] = 0;
 
-      for (i = 0; i < nb_loc; i++)
+      for (i = 0; i < q; i++)
       {
         // yuck, this is the slow step, we're throwing away all the previous
         // calculations.  can we keep a heap somehow?
         min_weight[i] = 0;
 
-        v_i = get_global_id(i, nb_loc, proc_rank);
+        v = get_global_id(i, q, proc_rank);
 
-        if (added[v_i] == 1)
+        if (added[v] == 1)
         {
           min_weight[i] = 0;
           continue;
         }
 
-        for (int v_j = 0; v_j < N; v_j++)
+        for (u = 0; u < N; u++)
         {
 
-          if (added[v_j] == 0)
+          if (added[u] == 0)
           {
             continue;
           }
 
-          if (v_i == v_j)
+          if (v == u)
             // don't include self loops,
             continue;
 
-          w = adj[v_j + i * N];
+          w = adj[u + i * N];
           if (w == 0)
             continue; // only want edges
 
@@ -443,11 +442,11 @@ void compute_mst(
             // then, if it's the lowest weight yet seen by process
             if (w < proc_min[0] || proc_min[0] == 0)
             {
-              // printf("lower weight edge R%dP%d %d:%d-%d\n", vertex_count, proc_rank, edge, v_i, v_j);
+              // printf("lower weight edge R%dP%d %d:%d-%d\n", vertex_count, proc_rank, edge, v, u);
               proc_min[0] = w;
               // Put into lexicographic order
-              proc_min[1] = v_i < v_j ? v_i : v_j;
-              proc_min[2] = v_i < v_j ? v_j : v_i;
+              proc_min[1] = v < u ? v : u;
+              proc_min[2] = v < u ? u : v;
             }
           }
         }
