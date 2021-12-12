@@ -2,20 +2,25 @@
 
 # todo: expand these test cases
 algos=('prim' 'kruskal')
-flavour=('seq')
-nodes=('06' '100')
-# proc_number = 3 4
+nodes=('05' '06' '100')
+proc_number=('1' '2' '3')
 
 for alg in "${algos[@]}"; do
-    for f in "${flavour[@]}"; do
     for n in "${nodes[@]}"; do
+    for p in "${proc_number[@]}"; do
         data="./tests/data-$n.txt"
         expected="./tests/exp-$n-$alg.txt"
-        actual="./tests/out-$n-$alg-$f.txt"
+        if [[ $p == '1' ]]; then
+            f='seq'
+        else
+            f='par'
+        fi
+        actual="./tests/out-$n-$alg-$f-$p.txt"
         touch $actual
-        mpirun -np 1 ./mst $data $alg-$f > $actual
-        diff -w $actual $expected
+        mpirun -np $p ./mst $data $alg-$f > $actual
+        diff -wq $actual $expected
     done
     done
 done
+echo "'diff -wy actual expected' to compare side-by-side"
 echo "Done"

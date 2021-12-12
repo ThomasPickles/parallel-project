@@ -19,5 +19,6 @@ run: mst
 
 clean:
 	rm -rf *.o mst
+	rm tests/out*
 
 .PHONY: clean run_cases.sh
