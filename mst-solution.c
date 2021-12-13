@@ -78,6 +78,28 @@ void sort_array(int **loc, int count)
 {
   qsort(loc, count, sizeof loc, deref_pointer);
 }
+int compare_edges(int *e1, int *e2)
+{
+  int e1_w = *e1, e1_1 = *(e1 + 1), e1_2 = *(e1 + 2);
+  int e2_w = *e2, e2_1 = *(e2 + 1), e2_2 = *(e2 + 2);
+  e1_1 = e1_1 < e1_2 ? e1_1 : e1_2;
+  e1_2 = e1_1 < e1_2 ? e1_2 : e1_1;
+  e2_1 = e2_1 < e2_2 ? e2_1 : e2_2;
+  e2_2 = e2_1 < e2_2 ? e2_2 : e2_1;
+  if (e1_w < e2_w)
+    return 1; // first better
+  if (e1_w > e2_w)
+    return -1; // second better
+  if (e1_1 < e2_1)
+    return 1;
+  if (e1_1 > e2_1)
+    return -1;
+  if (e1_2 < e2_2)
+    return 1;
+  if (e1_2 > e2_2)
+    return -1;
+  return 0; // match
+}
 
 int is_better_edge(int candidate_w, int best_w, int candidate_1, int candidate_2, int best_1, int best_2)
 {
@@ -105,43 +127,54 @@ int is_better_edge(int candidate_w, int best_w, int candidate_1, int candidate_2
 }
 
 int VERBOSE = 0;
-void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N)
+void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N, int q, int parallel, int proc_rank)
 {
   // adjancency matrix is symmetric, so only consider upper
   // triangular part
   int *ptr = edges; //, *ptr1 = v1, *ptr2 = v2;
-  int i, j, w;
+  int i_local, i_global, j, w;
   int count = 0;
-  for (i = 0; i < N; i++)
+  int start;
+  for (i_local = 0; i_local < q; i_local++)
   {
-    for (j = i + 1; j < N; j++)
+    if (parallel)
     {
-      w = adj[i * N + j];
-      if (has_edge(w))
+      i_global = i_local + q * proc_rank;
+    }
+    else
+    {
+      i_global = i_local;
+    }
+    // start at i+1 to avoid self loops
+    start = parallel ? 0 : i_local + 1;
+    for (j = start; j < N; j++)
+    {
+      // not a great implementation of this conditional
+      // right inside a double for-loop :(
+      if (i_global == j)
+        continue;
+      w = adj[i_local * N + j];
+      if (w > 0)
       {
         // update and increment
-        loc[count] = ptr; // edge address
-        *ptr++ = w;       // weights
-        *ptr++ = i;       // v1
-        *ptr++ = j;       // v2
+        loc[count] = ptr;                     // edge address
+        *ptr++ = w;                           // weights
+        *ptr++ = i_global < j ? i_global : j; // v1
+        *ptr++ = i_global < j ? j : i_global; // v2
         count++;
       }
     }
   }
 
-  print_array(edges, 3 * count, 0);
-
   if (VERBOSE > 0)
   {
+    print_array(edges, 3 * count, 1);
     puts("Before sorting:");
-    for (i = 0; i < count; i++)
+    for (int i = 0; i < count; i++)
     {
       printf("value: %-6d adress: %p\n", *loc[i], loc[i]);
     }
   }
-  // read through code
-  // pointer to pointer is useful to give location of a result,
-  // since we can only pass by value
 
   // edge order
   sort_array(loc, count);
@@ -149,7 +182,7 @@ void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N)
   if (VERBOSE > 0)
   {
     puts("After sorting:");
-    for (i = 0; i < count; i++)
+    for (int i = 0; i < count; i++)
     {
       printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - edges));
     }
@@ -158,11 +191,65 @@ void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N)
   *ret = count;
 }
 
+int merge(int *out_set, int *set1, int *set2, int M1, int M2)
+{
+  // both sets should be sorted in weight order, so merge in turn
+
+  int *p1 = set1, *p2 = set2;
+  int *end1 = p1 + 3 * M1, *end2 = p2 + 3 * M2;
+  int i = 0;
+  int cmp = 0;
+
+  while (p1 < end1 || p2 < end2)
+  {
+    // elems in both lists
+    if (p1 < end1 && p2 < end2)
+    {
+
+      cmp = compare_edges(p1, p2);
+      if (cmp == 1)
+      {
+        out_set[i++] = *p1++;
+        out_set[i++] = *p1++;
+        out_set[i++] = *p1++;
+      }
+      else if (cmp == -1)
+      {
+        out_set[i++] = *p2++;
+        out_set[i++] = *p2++;
+        out_set[i++] = *p2++;
+      }
+      else
+      {
+        out_set[i++] = *p1++;
+        out_set[i++] = *p1++;
+        out_set[i++] = *p1++;
+        p2 = p2 + 3;
+      }
+    }
+    else if (p1 < end1)
+    {
+      out_set[i++] = *p1++;
+      out_set[i++] = *p1++;
+      out_set[i++] = *p1++;
+    }
+    else
+    {
+      out_set[i++] = *p2++;
+      out_set[i++] = *p2++;
+      out_set[i++] = *p2++;
+    }
+  }
+  return i / 3;
+}
+
 void kruskal(int *out_buf, int edge_count, int *edges, int **loc, int N, int *vertices_to_include)
 {
   int *leaders = calloc(N, sizeof(int));
   int idx, i, w;
   int mst = 0;
+
+  // todo: vertices to include
 
   for (int i = 0; i < N; i++)
   {
@@ -311,7 +398,7 @@ void compute_mst(
       vertices[3 * i + 2] = -1; // key
     }
 
-    vertices[2 * last_added] = 2;
+    vertices[3 * last_added] = 2;
 
     for (int vertex_count = 1; vertex_count < N; vertex_count++)
     {
@@ -328,8 +415,6 @@ void compute_mst(
       MPI_Abort(MPI_COMM_WORLD, 1);
     }
     // BEGIN IMPLEMENTATION HERE
-    // TODO: HOW TO WRITE TESTS IN C?
-    // TODO: HOW TO PASS ARRAY SIZE AS A PARAM?
     // TODO: DO I WANT TO USE CONST FOR SOME OF THESE ARRAY POINTERS?
 
     // To check for set membership for vertices, just keep an array of length N
@@ -340,12 +425,11 @@ void compute_mst(
     int count = 0;                        // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
 
     // todo: check all pointers are allocated properly
+    // todo: free all memory, particularly anything allocated within a loop
     if (edges == NULL)
     {
       fprintf(stderr, "malloc failed\n");
     }
-
-    create_edge_list(&count, edges, loc, adj, N);
 
     int *vertices_to_include = calloc(N, sizeof(int));
 
@@ -354,6 +438,8 @@ void compute_mst(
     {
       vertices_to_include[i] = 1;
     }
+
+    create_edge_list(&count, edges, loc, adj, N, N, 0, 0);
 
     kruskal(NULL, count, edges, loc, N, vertices_to_include);
 
@@ -410,6 +496,7 @@ void compute_mst(
 
         v = get_global_id(i, q, proc_rank);
 
+        // todo: use prim seq subroutine to help with this - lots of duplication here
         if (added[v] == 1)
         {
           min_weight[i] = 0;
@@ -488,16 +575,117 @@ void compute_mst(
   else if (strcmp(algo_name, "kruskal-par") == 0)
   { // Parallel Kruskal's algorithm
     // BEGIN IMPLEMENTATION HERE
-    // TEST merge
-    // N = 5, M=5
-    // int V[5] = {0, 1, 2, 3, 4};
-    int e[15] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4, 3, 4, 2}; // tuple (v1,v2,w)
-    // in-place modification of e:
-    // kruskal(e, 5, V, 5);
-    for (int i = 0; i < 15; i++)
+
+    if (N % nb_procs != 0)
     {
-      printf("%d ", e[i]);
+      printf("Procs doesn't exactly divide vertices, exiting...");
+      return;
     }
+    int root = 0;
+    int q = N / nb_procs;
+    int MAX_EDGES = N * q; // in case fully connected
+    int *include = calloc(N, sizeof(int));
+    for (int i = proc_rank * q; i < (proc_rank + 1) * q; i++)
+    {
+      include[i] = 1;
+    }
+
+    // don't actually know how many edges we'll have on each processor,
+    // and it many be more than M / q, so allocate
+    // enough space for a fully-connected graph in the worst case
+    int *edges = calloc(3 * MAX_EDGES, sizeof(int));
+    int **loc = calloc(MAX_EDGES, sizeof(int *)); // initialise array of pointers
+    int *counts = calloc(nb_procs, sizeof(int));
+    int count = 0;
+
+    int *address;
+    int *send_buf = calloc(3 * MAX_EDGES, sizeof(int));
+    // TODO: this is a huge waste of memory, since we only need it
+    // on root proc
+    int *edge_buf = calloc(3 * nb_procs * MAX_EDGES, sizeof(int));
+
+    create_edge_list(&count, edges, loc, adj, N, q, 1, proc_rank);
+
+    for (int i = 0; i < count; i++)
+    {
+      // put edges into order
+      address = loc[i];
+      send_buf[3 * i] = *address;
+      send_buf[3 * i + 1] = *(address + 1);
+      send_buf[3 * i + 2] = *(address + 2);
+    }
+
+    MPI_Gather(&count, 1, MPI_INT, counts, 1, MPI_INT, root, MPI_COMM_WORLD);
+    MPI_Gather(send_buf, 3 * MAX_EDGES, MPI_INT, edge_buf, 3 * MAX_EDGES, MPI_INT, root, MPI_COMM_WORLD);
+    // MPI_Get_count(&status, MPI_INT, &rcv_count);
+    // printf("Got %d elements from proc %d\n", rcv_count, sender);
+
+    if (proc_rank == root)
+    {
+
+      for (int proc = 0; proc < nb_procs; proc++)
+      {
+        int start_elem = proc * (3 * MAX_EDGES);
+        int end_elem = start_elem + 3 * counts[proc];
+        printf("Received from %d:\n[", proc);
+        for (int j = start_elem; j < end_elem; j = j + 3)
+        {
+          printf("(%d, %d-%d) ", edge_buf[j], edge_buf[j + 1], edge_buf[j + 2]);
+        }
+        printf("]\n");
+      }
+
+      // for (int z = 2, z > 0, z--)
+      // {
+
+      int c2 = counts[2];
+      int *s2 = edge_buf + 2 * (3 * MAX_EDGES); // pointer to arr_start
+      int c1 = counts[1];
+      int *s1 = edge_buf + 1 * (3 * MAX_EDGES); // pointer to arr_start
+      int *out = calloc((c1 + c2) * 3, sizeof(int));
+
+      merge(out, s1, s2, c1, c2);
+
+      printf("After merge of 1 and 2:\n[");
+      for (int j = 0; j < c1 + c2; j = j + 3)
+      {
+        printf("(%d, %d-%d) ", out[j], out[j + 1], out[j + 2]);
+      }
+      printf("]\n");
+    }
+    // }
+    //   int s1[12] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4};           // tuple (v1,v2,w)
+    //   int s2[9] = {1, 2, 3, 1, 3, 4, 3, 4, 2};                     // tuple (v1,v2,w)
+    //   // in-place modification of e:
+    //   // kruskal(e, 5, V, 5);
+
+    // puts("kruskal gives:");
+    // kruskal(out_buf, 5, out, loc, 5, include);
+
+    // if (proc_rank == 0)
+    // {
+
+    //   int out_buf[15] = {0};
+    //   int all[15] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4, 3, 4, 2}; // tuple (v1,v2,w)
+    //   int out[15] = {0};                                           // tuple (v1,v2,w)
+    //   int s1[12] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4};           // tuple (v1,v2,w)
+    //   int s2[9] = {1, 2, 3, 1, 3, 4, 3, 4, 2};                     // tuple (v1,v2,w)
+    //   // in-place modification of e:
+    //   // kruskal(e, 5, V, 5);
+
+    //   merge(out, s1, s2, 4, 3);
+
+    //   puts("merged array is");
+    //   for (int i = 0; i < 15; i++)
+    //   {
+    //     printf("%d ", out[i]);
+    //   }
+    // }
+
+    // Merge(F 1, F 2)
+    //     Input : two set of edges F 1,
+    //             F 2(not necessary disjoint)on V.Output : a MSF of(V, F 1 ∪ F 2) .1. P 2 sends F 2 to P 1 then terminates itself .2. P 1 runs and return Kruskal((V, F 1 ∪ F 2)).
+
     // V1 = [ 1, 1, 1, 0, 0 ]; // vertices {0,1,2};
     // V2 = [ 0, 1, 0, 1, 1 ]; // vertices {1,3,4};
     // e1 = {0, 1, 2, 1, 2, 3};

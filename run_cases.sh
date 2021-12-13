@@ -17,8 +17,12 @@ for alg in "${algos[@]}"; do
         fi
         actual="./tests/out-$n-$alg-$f-$p.txt"
         touch $actual
-        mpirun -np $p ./mst $data $alg-$f > $actual
-        diff -wq $actual $expected
+        if [ -e $expected ]; then
+            mpirun -np $p ./mst $data $alg-$f > $actual
+            diff -wq $actual $expected
+            nomatch=$(sort $actual $expected | uniq -u | wc -l)
+        [ $nomatch -gt 0 ] && echo "Found ${nomatch} lines different"
+        fi
     done
     done
 done

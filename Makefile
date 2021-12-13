@@ -5,8 +5,13 @@ tests: mst run_cases.sh
 	grep -ri 'TODO' .
 	./run_cases.sh
 
-charts: mst
+charts: mst gen_perf.py generate-data.sh
+	python3 gen_perf.py > perf-cases.txt
+	cat perf-cases.txt | generate-data.sh
 	python3 make_charts.py
+
+run: mst
+	mpirun -np 3 ./mst ./tests/data-06.txt kruskal-par
 
 mst: mst-skeleton.c mst-solution.c
 	$(CC) $(CFLAGS) -o $@ $< -lm
@@ -14,8 +19,6 @@ mst: mst-skeleton.c mst-solution.c
 graph: create-graph.py
 	python2.7 $< 6 14 5 graph.txt
 
-run: mst
-	mpirun -np 1 ./mst graph.txt kruskal-seq
 
 clean:
 	rm -rf *.o mst
