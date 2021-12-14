@@ -5,6 +5,7 @@
  * @param algo_name the name of the algorithm to be executed
  */
 
+int VERBOSE = 0;
 int has_edge(int weight)
 {
   return weight > 0;
@@ -16,8 +17,6 @@ int previous_candidate(int min_weight)
 
 int find_set(int *parent_array, int elem)
 {
-  // TODO: CAN MAKE MORE EFFICIENT BY UPDATING POINTER
-  // EACH TIME WE GET LEADER.  MAKES TREE MUCH SHALLOWER
   int parent = parent_array[elem];
   if (parent == elem)
   {
@@ -25,7 +24,11 @@ int find_set(int *parent_array, int elem)
   }
   else
   {
-    return find_set(parent_array, parent);
+    // Optim: CAN MAKE MORE EFFICIENT BY UPDATING POINTER
+    // EACH TIME WE GET LEADER.  MAKES TREE MUCH SHALLOWER
+    parent = find_set(parent_array, parent);
+    parent_array[elem] = parent;
+    return parent;
   }
 }
 void union_sets(int *parents_array, int t1, int t2)
@@ -67,16 +70,57 @@ void add_edge(int e1, int e2)
   printf("%d %d\n", min, max);
 }
 
-int deref_pointer(const void *v1, const void *v2)
+int compare_elem_at_address(const void *v1, const void *v2)
 {
   const int i1 = **(const int **)v1;
   const int i2 = **(const int **)v2;
   return i1 < i2 ? -1 : (i1 > i2);
 }
-
-void sort_array(int **loc, int count)
+void sort_edges(int *sorted_edges, int *edges, int count)
 {
-  qsort(loc, count, sizeof loc, deref_pointer);
+
+  int **loc = calloc(count, sizeof(int *)); // initialise array of pointers
+  for (int i = 0; i < count; i++)
+  {
+    loc[i] = &edges[3 * i];
+  }
+
+  // sort edge list
+  // loc -> iteration order
+  if (VERBOSE > 0)
+  {
+    print_array(edges, 3 * count, 1);
+    puts("Before sorting:");
+    for (int i = 0; i < count; i++)
+    {
+      printf("value: %-6d adress: %p\n", *loc[i], loc[i]);
+    }
+  }
+
+  // edge order
+  qsort(loc, count, sizeof loc, compare_elem_at_address);
+
+  if (VERBOSE > 0)
+  {
+    puts("After sorting:");
+    for (int i = 0; i < count; i++)
+    {
+      printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - edges));
+    }
+  }
+
+  int idx;
+  for (int i = 0; i < count; i++)
+  {
+    idx = (int)(loc[i] - edges);
+    sorted_edges[3 * i] = edges[idx];
+    sorted_edges[3 * i + 1] = edges[idx + 1];
+    sorted_edges[3 * i + 2] = edges[idx + 2];
+  }
+  free(loc);
+}
+void sort_array(int **pointer_array, int count)
+{
 }
 int compare_edges(int *e1, int *e2)
 {
@@ -126,8 +170,7 @@ int is_better_edge(int candidate_w, int best_w, int candidate_1, int candidate_2
   return 0;
 }
 
-int VERBOSE = 0;
-void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N, int q, int parallel, int proc_rank)
+void create_edge_list(int *ret, int *edges, int *adj, int N, int q, int parallel, int proc_rank)
 {
   // adjancency matrix is symmetric, so only consider upper
   // triangular part
@@ -157,7 +200,6 @@ void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N, int q, i
       if (w > 0)
       {
         // update and increment
-        loc[count] = ptr;                     // edge address
         *ptr++ = w;                           // weights
         *ptr++ = i_global < j ? i_global : j; // v1
         *ptr++ = i_global < j ? j : i_global; // v2
@@ -165,29 +207,6 @@ void create_edge_list(int *ret, int *edges, int **loc, int *adj, int N, int q, i
       }
     }
   }
-
-  if (VERBOSE > 0)
-  {
-    print_array(edges, 3 * count, 1);
-    puts("Before sorting:");
-    for (int i = 0; i < count; i++)
-    {
-      printf("value: %-6d adress: %p\n", *loc[i], loc[i]);
-    }
-  }
-
-  // edge order
-  sort_array(loc, count);
-
-  if (VERBOSE > 0)
-  {
-    puts("After sorting:");
-    for (int i = 0; i < count; i++)
-    {
-      printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - edges));
-    }
-  }
-
   *ret = count;
 }
 
@@ -243,10 +262,10 @@ int merge(int *out_set, int *set1, int *set2, int M1, int M2)
   return i / 3;
 }
 
-void kruskal(int *out_buf, int edge_count, int *edges, int **loc, int N, int *vertices_to_include)
+void kruskal(int *out_buf, int edge_count, int *sorted_edges, int N, int *vertices_to_include)
 {
   int *leaders = calloc(N, sizeof(int));
-  int idx, i, w;
+  int idx, w;
   int mst = 0;
 
   // todo: vertices to include
@@ -257,12 +276,11 @@ void kruskal(int *out_buf, int edge_count, int *edges, int **loc, int N, int *ve
   }
   int *added = calloc(N, sizeof(int));
   int t1, t2, l1, l2;
-  for (i = 0; i < edge_count; i++)
+  for (idx = 0; idx < edge_count; idx++)
   {
-    idx = loc[i] - edges;
-    w = edges[idx];
-    t1 = edges[idx + 1]; // t1 < t2
-    t2 = edges[idx + 2];
+    w = sorted_edges[3 * idx];
+    t1 = sorted_edges[3 * idx + 1]; // t1 < t2
+    t2 = sorted_edges[3 * idx + 2];
 
     l1 = find_set(leaders, t1);
     l2 = find_set(leaders, t2);
@@ -354,7 +372,17 @@ int get_global_id(int local_id, int vertices_per_proc, int proc_rank)
 {
   return local_id + vertices_per_proc * proc_rank;
 }
+void prim(int *vertices, int N, int *adj, int start_vertex)
+{
+  int last_added = start_vertex;
+  vertices[3 * last_added] = 2;
 
+  for (int vertex_count = 1; vertex_count < N; vertex_count++)
+  {
+    update_mins_for_vertices(vertices, adj, last_added, N);
+    get_abs_min(&last_added, vertices, N);
+  }
+}
 void compute_mst(
     int N,
     int M,
@@ -385,9 +413,7 @@ void compute_mst(
     // adjacency matrix size N**2
     // accordingly might not be feasible to convert to binary heap as this
     // requires adjacency list representation
-    int start_vertex = 0;
     int *vertices = calloc(3 * N, sizeof(int));
-    int last_added = start_vertex;
 
     // (added, min_weight_edge, to_vertex)
     for (int i = 0; i < N; i++)
@@ -397,15 +423,7 @@ void compute_mst(
       vertices[3 * i + 1] = 0;  // min weight
       vertices[3 * i + 2] = -1; // key
     }
-
-    vertices[3 * last_added] = 2;
-
-    for (int vertex_count = 1; vertex_count < N; vertex_count++)
-    {
-
-      update_mins_for_vertices(vertices, adj, last_added, N);
-      get_abs_min(&last_added, vertices, N);
-    }
+    prim(vertices, N, adj, 0);
   }
   else if (strcmp(algo_name, "kruskal-seq") == 0)
   { // Sequential Kruskal's algorithm
@@ -421,8 +439,8 @@ void compute_mst(
     //  initialised to 0, and set value to 1 if vertex is added to set.
 
     int *edges = calloc(3 * M, sizeof(int));
-    int **loc = calloc(M, sizeof(int *)); // initialise array of pointers
-    int count = 0;                        // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
+    int *sorted_edges = calloc(3 * M, sizeof(int));
+    int count = 0; // NOT THE SAME AS M, SINCE WE IGNORE SELF-LOOPS
 
     // todo: check all pointers are allocated properly
     // todo: free all memory, particularly anything allocated within a loop
@@ -439,12 +457,11 @@ void compute_mst(
       vertices_to_include[i] = 1;
     }
 
-    create_edge_list(&count, edges, loc, adj, N, N, 0, 0);
-
-    kruskal(NULL, count, edges, loc, N, vertices_to_include);
+    create_edge_list(&count, edges, adj, N, N, 0, 0);
+    sort_edges(sorted_edges, edges, count);
+    kruskal(NULL, count, sorted_edges, N, vertices_to_include);
 
     free(edges);
-    free(loc);
 
     //////
   }
@@ -594,29 +611,20 @@ void compute_mst(
     // and it many be more than M / q, so allocate
     // enough space for a fully-connected graph in the worst case
     int *edges = calloc(3 * MAX_EDGES, sizeof(int));
-    int **loc = calloc(MAX_EDGES, sizeof(int *)); // initialise array of pointers
+    int *sorted_edges = calloc(3 * MAX_EDGES, sizeof(int));
     int *counts = calloc(nb_procs, sizeof(int));
     int count = 0;
 
-    int *address;
-    int *send_buf = calloc(3 * MAX_EDGES, sizeof(int));
     // TODO: this is a huge waste of memory, since we only need it
     // on root proc
     int *edge_buf = calloc(3 * nb_procs * MAX_EDGES, sizeof(int));
+    int *out = calloc(3 * N, sizeof(int)); // MST is N-1 edges
 
-    create_edge_list(&count, edges, loc, adj, N, q, 1, proc_rank);
-
-    for (int i = 0; i < count; i++)
-    {
-      // put edges into order
-      address = loc[i];
-      send_buf[3 * i] = *address;
-      send_buf[3 * i + 1] = *(address + 1);
-      send_buf[3 * i + 2] = *(address + 2);
-    }
+    create_edge_list(&count, edges, adj, N, q, 1, proc_rank);
+    sort_edges(sorted_edges, edges, count);
 
     MPI_Gather(&count, 1, MPI_INT, counts, 1, MPI_INT, root, MPI_COMM_WORLD);
-    MPI_Gather(send_buf, 3 * MAX_EDGES, MPI_INT, edge_buf, 3 * MAX_EDGES, MPI_INT, root, MPI_COMM_WORLD);
+    MPI_Gather(sorted_edges, 3 * MAX_EDGES, MPI_INT, edge_buf, 3 * MAX_EDGES, MPI_INT, root, MPI_COMM_WORLD);
     // MPI_Get_count(&status, MPI_INT, &rcv_count);
     // printf("Got %d elements from proc %d\n", rcv_count, sender);
 
@@ -635,29 +643,30 @@ void compute_mst(
         printf("]\n");
       }
 
-      // for (int z = 2, z > 0, z--)
+      // for (int z = nb_procs, z > 0, z--)
       // {
+      //   // merge all procs into root, and do kruskal
+      //   int c2 = counts[2];
+      //   int *s2 = edge_buf + 2 * (3 * MAX_EDGES); // pointer to arr_start
+      //   int c1 = counts[1];
+      //   int *s1 = edge_buf + 1 * (3 * MAX_EDGES); // pointer to arr_start
+      //   int *out = calloc((c1 + c2) * 3, sizeof(int));
 
-      int c2 = counts[2];
-      int *s2 = edge_buf + 2 * (3 * MAX_EDGES); // pointer to arr_start
-      int c1 = counts[1];
-      int *s1 = edge_buf + 1 * (3 * MAX_EDGES); // pointer to arr_start
-      int *out = calloc((c1 + c2) * 3, sizeof(int));
+      //   merge(out, s1, s2, c1, c2);
+      //   kruskal(int *out_buf, int edge_count, int *edges, int **loc, int N, int *vertices_to_include)
+      //       kruskal(e, 5, V, 5);
 
-      merge(out, s1, s2, c1, c2);
-
-      printf("After merge of 1 and 2:\n[");
-      for (int j = 0; j < c1 + c2; j = j + 3)
-      {
-        printf("(%d, %d-%d) ", out[j], out[j + 1], out[j + 2]);
-      }
-      printf("]\n");
+      //   printf("After merge of 1 and 2:\n[");
+      //   for (int j = 0; j < c1 + c2; j = j + 3)
+      //   {
+      //     printf("(%d, %d-%d) ", out[j], out[j + 1], out[j + 2]);
+      //   }
+      //   printf("]\n");
+      // }
     }
-    // }
     //   int s1[12] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4};           // tuple (v1,v2,w)
     //   int s2[9] = {1, 2, 3, 1, 3, 4, 3, 4, 2};                     // tuple (v1,v2,w)
     //   // in-place modification of e:
-    //   // kruskal(e, 5, V, 5);
 
     // puts("kruskal gives:");
     // kruskal(out_buf, 5, out, loc, 5, include);
