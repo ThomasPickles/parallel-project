@@ -22,14 +22,6 @@ void output_edges(int *edges, int count)
     printf("%d %d\n", edges[3 * j + 1], edges[3 * j + 2]);
   }
 }
-int has_edge(int weight)
-{
-  return weight > 0;
-}
-int previous_candidate(int min_weight)
-{
-  return min_weight != 10;
-}
 
 int find_set(int *parent_array, int elem)
 {
@@ -94,36 +86,13 @@ int compare_elem_at_address(const void *v1, const void *v2)
 }
 void sort_edges(int *sorted_edges, int *edges, int count)
 {
-
-  int **loc = calloc(count, sizeof(int *)); // initialise array of pointers
+  int **loc = calloc(count, sizeof(int *)); //  array of pointers
   for (int i = 0; i < count; i++)
   {
     loc[i] = &edges[3 * i];
   }
 
-  // sort edge list
-  // loc -> iteration order
-  if (VERBOSE > 0)
-  {
-    print_vertices(edges, 3 * count, 1);
-    puts("Before sorting:");
-    for (int i = 0; i < count; i++)
-    {
-      printf("value: %-6d adress: %p\n", *loc[i], loc[i]);
-    }
-  }
-
-  // edge order
   qsort(loc, count, sizeof loc, compare_elem_at_address);
-
-  if (VERBOSE > 0)
-  {
-    puts("After sorting:");
-    for (int i = 0; i < count; i++)
-    {
-      printf("value: %-6d posn: %d\n", *loc[i], (int)(loc[i] - edges));
-    }
-  }
 
   int idx;
   for (int i = 0; i < count; i++)
@@ -134,9 +103,6 @@ void sort_edges(int *sorted_edges, int *edges, int count)
     sorted_edges[3 * i + 2] = edges[idx + 2];
   }
   free(loc);
-}
-void sort_array(int **pointer_array, int count)
-{
 }
 int compare_edges(int *e1, int *e2)
 {
@@ -228,7 +194,7 @@ void create_edge_list(int *ret, int *edges, int *adj, int N, int q, int parallel
 
 int merge(int *out_set, int *set1, int *set2, int M1, int M2)
 {
-  // both sets should be sorted in weight order, so merge in turn
+  // both sets are sorted in weight order, so merge in turn
 
   int *p1 = set1, *p2 = set2;
   int *end1 = p1 + 3 * M1, *end2 = p2 + 3 * M2;
@@ -357,13 +323,7 @@ void update_mins_for_vertices(int *vertices, int *adj, int last_added, int N)
 
 void get_abs_min(int *last_added, int *vertices, int N)
 {
-  // Get absolute min
   // find the absolute lowest weight among candidate edges
-  // TODO: possible optimisation:
-  // might be better to keep an "adjacency set to iterate over", rahter than reading
-  // the vertices array again.  Although this is only really a O(N) step, so probably
-  // not a big deal
-
   int u, v, w, w_min = 0, u_min = 0, v_min = 0, status;
   for (v = 0; v < N; v++)
   {
@@ -381,12 +341,6 @@ void get_abs_min(int *last_added, int *vertices, int N)
       }
     }
   }
-
-  print_edge(u_min, v_min);
-
-  // remove edge as candidate
-  vertices[3 * v_min] = 2;
-  vertices[3 * v_min + 1] = 0;
   *last_added = v_min;
 }
 
@@ -396,13 +350,18 @@ int get_global_id(int local_id, int vertices_per_proc, int proc_rank)
 }
 void prim(int *vertices, int N, int *adj, int start_vertex)
 {
-  int last_added = start_vertex;
-  vertices[3 * last_added] = 2;
+  int next = start_vertex;
+  vertices[3 * next] = 2;
 
   for (int vertex_count = 1; vertex_count < N; vertex_count++)
   {
-    update_mins_for_vertices(vertices, adj, last_added, N);
-    get_abs_min(&last_added, vertices, N);
+    update_mins_for_vertices(vertices, adj, next, N);
+    get_abs_min(&next, vertices, N);
+
+    // remove edge as candidate
+    print_edge(next, vertices[3 * next + 2]);
+    vertices[3 * next] = 2;
+    vertices[3 * next + 1] = 0;
   }
 }
 void compute_mst(
@@ -498,90 +457,103 @@ void compute_mst(
     }
     int root = 0;
     int q = N / nb_procs;
-    int start_vertex = 0; // less than q
     // shared among all processes
     int *added = calloc(N, sizeof(int));
-    int *min_weight = calloc(q, sizeof(int));
+    int *vertices = calloc(3 * q, sizeof(int)); // weight, key
 
-    int *vertices = calloc(3 * nb_procs, sizeof(int));
+    int *edge_buf = calloc(3 * nb_procs, sizeof(int));
+
     int proc_min[3] = {0};
-    int i, u, w, next, v; //
+    int i, u, w, next = 0, v, status; //
 
-    if (proc_rank == root)
+    // initialise within set
+    // for each vertex on the processor
+    for (i = 0; i < q; i++)
     {
-      next = start_vertex;
+      // yuck, this is the slow step, we're throwing away all the previous
+      // calculations.  can we keep a heap somehow?
+      vertices[3 * i] = 0;      // status
+      vertices[3 * i + 1] = 0;  // weight
+      vertices[3 * i + 2] = -1; // global key
     }
 
     for (int vertex_count = 0; vertex_count < N - 1; vertex_count++)
     {
+      if (proc_rank == root)
+      {
+        added[next] = 1;
+      }
+
       MPI_Bcast(&next, 1, MPI_INT, root, MPI_COMM_WORLD);
 
-      // add to set
-      added[next] = 1;
+      if ((int)(next / q) == proc_rank)
+      {
+        i = next % q;
+        // remove edge as candidate
+        vertices[3 * i] = 2;
+        vertices[3 * i + 1] = 0;
+      }
 
-      // get minimum for process, do on all processes
-      // I'm concerned that we can't just keep the minimum, since when this
-      // gets sucked up into the tree, how do we know what is the second
-      // smallest? For now we can just do the double for-loop, and perhaps
-      // look at some optimatisions later (make it run, make it right, make it fast)
+      // best for each vertex
+      // for each vertex on the processor
+      for (i = 0; i < q; i++)
+      {
+
+        status = vertices[3 * i];
+        if (status != 2)
+        {
+          v = i + q * proc_rank;
+
+          // todo: use prim seq subroutine to help with this - lots of duplication here
+          // can we get rid of this loop, and just look at the next edge?
+
+          w = adj[next + i * N];
+          if (is_better_edge(w, vertices[3 * i + 1], v, next, v, vertices[3 * i + 2]))
+          {
+            if (v != next)
+            {                      // no self-loops
+              vertices[3 * i] = 1; // seen
+              vertices[3 * i + 1] = w;
+              vertices[3 * i + 2] = next;
+            }
+          }
+        }
+      }
+
+      // best on each processor
       proc_min[0] = 0;
       proc_min[1] = 0;
       proc_min[2] = 0;
 
       for (i = 0; i < q; i++)
       {
-        // yuck, this is the slow step, we're throwing away all the previous
-        // calculations.  can we keep a heap somehow?
-        min_weight[i] = 0;
-
-        v = get_global_id(i, q, proc_rank);
-
-        // todo: use prim seq subroutine to help with this - lots of duplication here
-        if (added[v] == 1)
+        status = vertices[3 * i];
+        if (status != 2)
         {
-          min_weight[i] = 0;
-          continue;
-        }
-
-        for (u = 0; u < N; u++)
-        {
-
-          if (added[u] == 0)
+          w = vertices[3 * i + 1];
+          u = vertices[3 * i + 2];
+          v = i + proc_rank * q;
+          if (is_better_edge(w, proc_min[0], u, v, proc_min[1], proc_min[2]))
           {
-            continue;
-          }
-
-          if (v == u)
-            // don't include self loops,
-            continue;
-
-          w = adj[u + i * N];
-          if (w == 0)
-            continue; // only want edges
-
-          if (w < min_weight[i] || min_weight[i] == 0) // and edge is lower weight
-          {
-            // update its key
-            min_weight[i] = w;
-            // TODO: feels costly to check whether we've set the proc_min
-            // to zero every time, since we just want to do it once
-            // for the first edge we find
-            // then, if it's the lowest weight yet seen by process
-            if (w < proc_min[0] || proc_min[0] == 0)
-            {
-              // printf("lower weight edge R%dP%d %d:%d-%d\n", vertex_count, proc_rank, edge, v, u);
-              proc_min[0] = w;
-              // Put into lexicographic order
-              proc_min[1] = v < u ? v : u;
-              proc_min[2] = v < u ? u : v;
-            }
+            proc_min[0] = w;
+            proc_min[1] = v < u ? v : u;
+            proc_min[2] = v < u ? u : v;
           }
         }
       }
+
+      // printf("%d: sending (%d %d-%d) from proc %d\n", vertex_count, proc_min[0], proc_min[1], proc_min[2], proc_rank);
+      // best of best
+
       // send mins back to root
       // TODO: can just do a reduce here, as we can discard any
       // values that are less than the minimum
-      MPI_Gather(&proc_min, 3, MPI_INT, vertices, 3, MPI_INT, root, MPI_COMM_WORLD);
+      for (int i = 0; i < 3 * nb_procs; i++)
+      {
+        edge_buf[i] = 0;
+      }
+
+      MPI_Gather(&proc_min, 3, MPI_INT, edge_buf, 3, MPI_INT, root, MPI_COMM_WORLD);
 
       if (proc_rank == root)
       {
@@ -590,9 +562,9 @@ void compute_mst(
         int w, u, v;
         for (int i = 0; i < nb_procs; i++)
         {
-          w = vertices[3 * i];
-          u = vertices[3 * i + 1];
-          v = vertices[3 * i + 2];
+          w = edge_buf[3 * i];
+          u = edge_buf[3 * i + 1];
+          v = edge_buf[3 * i + 2];
           if (is_better_edge(w, w_min, u, v, u_min, v_min))
           {
             w_min = w;
