@@ -6,6 +6,22 @@
  */
 
 int VERBOSE = 0;
+void print_edges(int *edges, int count)
+{
+  printf("edge count %d :[", count);
+  for (int j = 0; j < count; j++)
+  {
+    printf("(%d, %d-%d) ", edges[3 * j], edges[3 * j + 1], edges[3 * j + 2]);
+  }
+  printf("]\n");
+}
+void output_edges(int *edges, int count)
+{
+  for (int j = 0; j < count; j++)
+  {
+    printf("%d %d\n", edges[3 * j + 1], edges[3 * j + 2]);
+  }
+}
 int has_edge(int weight)
 {
   return weight > 0;
@@ -38,7 +54,7 @@ void union_sets(int *parents_array, int t1, int t2)
   int l2 = find_set(parents_array, t2);
   parents_array[l2] = l1;
 }
-void print_array(int *arr, int count, int log_level)
+void print_vertices(int *arr, int count, int log_level)
 {
   if (log_level > 0)
   {
@@ -62,7 +78,7 @@ void print_array(int *arr, int count, int log_level)
     printf("%d]\n", arr[count - 1]);
   }
 }
-void add_edge(int e1, int e2)
+void print_edge(int e1, int e2)
 {
   int min, max;
   min = e1 < e2 ? e1 : e2;
@@ -89,7 +105,7 @@ void sort_edges(int *sorted_edges, int *edges, int count)
   // loc -> iteration order
   if (VERBOSE > 0)
   {
-    print_array(edges, 3 * count, 1);
+    print_vertices(edges, 3 * count, 1);
     puts("Before sorting:");
     for (int i = 0; i < count; i++)
     {
@@ -262,18 +278,19 @@ int merge(int *out_set, int *set1, int *set2, int M1, int M2)
   return i / 3;
 }
 
-void kruskal(int *out_buf, int edge_count, int *sorted_edges, int N, int *vertices_to_include)
+int kruskal(int *out_buf, int edge_count, int *sorted_edges, int N, int *vertex_list)
 {
   int *leaders = calloc(N, sizeof(int));
   int idx, w;
   int mst = 0;
-
+  int count = 0;
   // todo: vertices to include
 
   for (int i = 0; i < N; i++)
   {
     leaders[i] = i;
   }
+  // todo: remove added variable if it doesn't do anything
   int *added = calloc(N, sizeof(int));
   int t1, t2, l1, l2;
   for (idx = 0; idx < edge_count; idx++)
@@ -288,13 +305,17 @@ void kruskal(int *out_buf, int edge_count, int *sorted_edges, int N, int *vertic
     if (l1 != l2)
     {
       // different set, add edge to combine sets
-      add_edge(t1, t2);
+
       // combine sets
       union_sets(leaders, t1, t2);
       // add vertices
       added[t1] = 1;
       added[t2] = 1;
+      out_buf[3 * count] = w;
+      out_buf[3 * count + 1] = t1;
+      out_buf[3 * count + 2] = t2;
       mst += w;
+      count++;
     }
     else
     {
@@ -304,6 +325,7 @@ void kruskal(int *out_buf, int edge_count, int *sorted_edges, int N, int *vertic
 
   free(added);
   free(leaders);
+  return count;
 }
 
 void update_mins_for_vertices(int *vertices, int *adj, int last_added, int N)
@@ -360,7 +382,7 @@ void get_abs_min(int *last_added, int *vertices, int N)
     }
   }
 
-  add_edge(u_min, v_min);
+  print_edge(u_min, v_min);
 
   // remove edge as candidate
   vertices[3 * v_min] = 2;
@@ -459,7 +481,8 @@ void compute_mst(
 
     create_edge_list(&count, edges, adj, N, N, 0, 0);
     sort_edges(sorted_edges, edges, count);
-    kruskal(NULL, count, sorted_edges, N, vertices_to_include);
+    count = kruskal(edges, count, sorted_edges, N, vertices_to_include);
+    output_edges(edges, count);
 
     free(edges);
 
@@ -585,7 +608,7 @@ void compute_mst(
         {
           next = u_min;
         }
-        add_edge(u_min, v_min);
+        print_edge(u_min, v_min);
       }
     }
   }
@@ -618,93 +641,37 @@ void compute_mst(
     // TODO: this is a huge waste of memory, since we only need it
     // on root proc
     int *edge_buf = calloc(3 * nb_procs * MAX_EDGES, sizeof(int));
-    int *out = calloc(3 * N, sizeof(int)); // MST is N-1 edges
 
     create_edge_list(&count, edges, adj, N, q, 1, proc_rank);
     sort_edges(sorted_edges, edges, count);
 
     MPI_Gather(&count, 1, MPI_INT, counts, 1, MPI_INT, root, MPI_COMM_WORLD);
     MPI_Gather(sorted_edges, 3 * MAX_EDGES, MPI_INT, edge_buf, 3 * MAX_EDGES, MPI_INT, root, MPI_COMM_WORLD);
-    // MPI_Get_count(&status, MPI_INT, &rcv_count);
-    // printf("Got %d elements from proc %d\n", rcv_count, sender);
 
     if (proc_rank == root)
     {
 
+      int *out = calloc(3 * MAX_EDGES, sizeof(int));      // MST is N-1 edges
+      int *merged = calloc(3 * MAX_EDGES, sizeof(int));   // MST is N-1 edges
+      int *to_merge = calloc(3 * MAX_EDGES, sizeof(int)); // MST is N-1 edges
+      int edge_count = 0, next_count;
+      // todo: speed up with memcopy?
+
       for (int proc = 0; proc < nb_procs; proc++)
       {
-        int start_elem = proc * (3 * MAX_EDGES);
-        int end_elem = start_elem + 3 * counts[proc];
-        printf("Received from %d:\n[", proc);
-        for (int j = start_elem; j < end_elem; j = j + 3)
+        int start = proc * (3 * MAX_EDGES);
+        for (int i = 0; i < 3 * counts[proc] + 3; i++)
         {
-          printf("(%d, %d-%d) ", edge_buf[j], edge_buf[j + 1], edge_buf[j + 2]);
+          to_merge[i] = edge_buf[i + start];
         }
-        printf("]\n");
+        next_count = counts[proc];
+        // merge all procs into root, and do kruskal
+        // swap buffers between two processes
+        edge_count = merge(out, merged, to_merge, edge_count, next_count);
+        edge_count = kruskal(merged, edge_count, out, N, NULL);
       }
-
-      // for (int z = nb_procs, z > 0, z--)
-      // {
-      //   // merge all procs into root, and do kruskal
-      //   int c2 = counts[2];
-      //   int *s2 = edge_buf + 2 * (3 * MAX_EDGES); // pointer to arr_start
-      //   int c1 = counts[1];
-      //   int *s1 = edge_buf + 1 * (3 * MAX_EDGES); // pointer to arr_start
-      //   int *out = calloc((c1 + c2) * 3, sizeof(int));
-
-      //   merge(out, s1, s2, c1, c2);
-      //   kruskal(int *out_buf, int edge_count, int *edges, int **loc, int N, int *vertices_to_include)
-      //       kruskal(e, 5, V, 5);
-
-      //   printf("After merge of 1 and 2:\n[");
-      //   for (int j = 0; j < c1 + c2; j = j + 3)
-      //   {
-      //     printf("(%d, %d-%d) ", out[j], out[j + 1], out[j + 2]);
-      //   }
-      //   printf("]\n");
-      // }
+      output_edges(merged, edge_count);
     }
-    //   int s1[12] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4};           // tuple (v1,v2,w)
-    //   int s2[9] = {1, 2, 3, 1, 3, 4, 3, 4, 2};                     // tuple (v1,v2,w)
-    //   // in-place modification of e:
-
-    // puts("kruskal gives:");
-    // kruskal(out_buf, 5, out, loc, 5, include);
-
-    // if (proc_rank == 0)
-    // {
-
-    //   int out_buf[15] = {0};
-    //   int all[15] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4, 3, 4, 2}; // tuple (v1,v2,w)
-    //   int out[15] = {0};                                           // tuple (v1,v2,w)
-    //   int s1[12] = {0, 1, 2, 0, 3, 1, 1, 2, 3, 1, 3, 4};           // tuple (v1,v2,w)
-    //   int s2[9] = {1, 2, 3, 1, 3, 4, 3, 4, 2};                     // tuple (v1,v2,w)
-    //   // in-place modification of e:
-    //   // kruskal(e, 5, V, 5);
-
-    //   merge(out, s1, s2, 4, 3);
-
-    //   puts("merged array is");
-    //   for (int i = 0; i < 15; i++)
-    //   {
-    //     printf("%d ", out[i]);
-    //   }
-    // }
-
-    // Merge(F 1, F 2)
-    //     Input : two set of edges F 1,
-    //             F 2(not necessary disjoint)on V.Output : a MSF of(V, F 1 ∪ F 2) .1. P 2 sends F 2 to P 1 then terminates itself .2. P 1 runs and return Kruskal((V, F 1 ∪ F 2)).
-
-    // V1 = [ 1, 1, 1, 0, 0 ]; // vertices {0,1,2};
-    // V2 = [ 0, 1, 0, 1, 1 ]; // vertices {1,3,4};
-    // e1 = {0, 1, 2, 1, 2, 3};
-    // e2 = {1, 3, 4, 3, 4, 2};
-    // // output
-    // V = [ 1, 1, 1, 1, 1 ];
-    // e = {0, 1, 2, 0, 3, 1, 1, 2, 3, 3, 4, 2};
-    // merge might be easier than expected, just need to run Kruskal
-    // if intersection (V1, V2)
-    //   is empty : add lowest weight u, v edge with u in V1 and v in V2 if | intersection(V1, V2) > 1 | : remove common edges
   }
   else
   { // Invalid algorithm name
