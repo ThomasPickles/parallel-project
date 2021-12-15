@@ -152,7 +152,7 @@ int is_better_edge(int candidate_w, int best_w, int candidate_1, int candidate_2
   return 0;
 }
 
-void create_edge_list(int *ret, int *edges, int *adj, int N, int q, int parallel, int proc_rank)
+void create_edge_list(int *ret, int *edges, int *adj, int N, int q, int parallel, int proc_rank, int q_max)
 {
   // adjancency matrix is symmetric, so only consider upper
   // triangular part
@@ -164,7 +164,7 @@ void create_edge_list(int *ret, int *edges, int *adj, int N, int q, int parallel
   {
     if (parallel)
     {
-      i_global = i_local + q * proc_rank;
+      i_global = i_local + q_max * proc_rank;
     }
     else
     {
@@ -374,8 +374,6 @@ void compute_mst(
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nb_procs);
 
-  // TODO: HANDLE CASE WHERE N MOD P != 0
-
   // todo: interesting idea is assigning "levels" for the edges,
   // BRANCH, REJECTED, BASIC, so we can mark the rejected eges
   // and the unseen ones
@@ -438,7 +436,7 @@ void compute_mst(
       vertices_to_include[i] = 1;
     }
 
-    create_edge_list(&count, edges, adj, N, N, 0, 0);
+    create_edge_list(&count, edges, adj, N, N, 0, 0, 0);
     sort_edges(sorted_edges, edges, count);
     count = kruskal(edges, count, sorted_edges, N, vertices_to_include);
     output_edges(edges, count);
@@ -450,28 +448,22 @@ void compute_mst(
   else if (strcmp(algo_name, "prim-par") == 0)
   { // Parallel Prim's algorithm
     // BEGIN IMPLEMENTATION HERE
-    if (N % nb_procs != 0)
-    {
-      printf("Procs doesn't exactly divide vertices, exiting...");
-      return;
-    }
     int root = 0;
-    int q = N / nb_procs;
+    int q_max = (N + nb_procs - 1) / nb_procs; // integer division without coversion to float
+    int q = (proc_rank + 1) * q_max > N ? N - proc_rank * q_max : q_max;
     // shared among all processes
     int *added = calloc(N, sizeof(int));
     int *vertices = calloc(3 * q, sizeof(int)); // weight, key
-
     int *edge_buf = calloc(3 * nb_procs, sizeof(int));
-
     int proc_min[3] = {0};
     int i, u, w, next = 0, v, status; //
+
+    // printf("hello from proc %d with %d vertices\n", proc_rank, q);
 
     // initialise within set
     // for each vertex on the processor
     for (i = 0; i < q; i++)
     {
-      // yuck, this is the slow step, we're throwing away all the previous
-      // calculations.  can we keep a heap somehow?
       vertices[3 * i] = 0;      // status
       vertices[3 * i + 1] = 0;  // weight
       vertices[3 * i + 2] = -1; // global key
@@ -486,9 +478,9 @@ void compute_mst(
 
       MPI_Bcast(&next, 1, MPI_INT, root, MPI_COMM_WORLD);
 
-      if ((int)(next / q) == proc_rank)
+      if ((int)(next / q_max) == proc_rank)
       {
-        i = next % q;
+        i = next % q_max;
         // remove edge as candidate
         vertices[3 * i] = 2;
         vertices[3 * i + 1] = 0;
@@ -502,7 +494,7 @@ void compute_mst(
         status = vertices[3 * i];
         if (status != 2)
         {
-          v = i + q * proc_rank;
+          v = i + q_max * proc_rank;
 
           // todo: use prim seq subroutine to help with this - lots of duplication here
           // can we get rid of this loop, and just look at the next edge?
@@ -532,7 +524,7 @@ void compute_mst(
         {
           w = vertices[3 * i + 1];
           u = vertices[3 * i + 2];
-          v = i + proc_rank * q;
+          v = i + proc_rank * q_max;
           if (is_better_edge(w, proc_min[0], u, v, proc_min[1], proc_min[2]))
           {
             proc_min[0] = w;
@@ -557,7 +549,6 @@ void compute_mst(
 
       if (proc_rank == root)
       {
-        // todo: take this decl out of loop
         int w_min = 0, u_min = 0, v_min = 0;
         int w, u, v;
         for (int i = 0; i < nb_procs; i++)
@@ -588,13 +579,9 @@ void compute_mst(
   { // Parallel Kruskal's algorithm
     // BEGIN IMPLEMENTATION HERE
 
-    if (N % nb_procs != 0)
-    {
-      printf("Procs doesn't exactly divide vertices, exiting...");
-      return;
-    }
     int root = 0;
-    int q = N / nb_procs;
+    int q_max = (N + nb_procs - 1) / nb_procs; // integer division without coversion to float
+    int q = (proc_rank + 1) * q_max > N ? N - proc_rank * q_max : q_max;
     int MAX_EDGES = N * q; // in case fully connected
     int *include = calloc(N, sizeof(int));
     for (int i = proc_rank * q; i < (proc_rank + 1) * q; i++)
@@ -614,7 +601,7 @@ void compute_mst(
     // on root proc
     int *edge_buf = calloc(3 * nb_procs * MAX_EDGES, sizeof(int));
 
-    create_edge_list(&count, edges, adj, N, q, 1, proc_rank);
+    create_edge_list(&count, edges, adj, N, q, 1, proc_rank, q_max);
     sort_edges(sorted_edges, edges, count);
 
     MPI_Gather(&count, 1, MPI_INT, counts, 1, MPI_INT, root, MPI_COMM_WORLD);
