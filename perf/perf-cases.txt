@@ -1,0 +1,6 @@
+5 11 1 perf/data-5-11-1.txt
+5 11 100 perf/data-5-11-100.txt
+10 32 1 perf/data-10-32-1.txt
+10 32 100 perf/data-10-32-100.txt
+100 1000 1 perf/data-100-1000-1.txt
+100 1000 100 perf/data-100-1000-100.txt

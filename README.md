@@ -1,26 +1,81 @@
-todo: simgrid processor array, find this in earlier TP
-todo: python script to produce charts
+# Parallel and Distributed Algorithms and Programs (APPD)
+Programming Project
+LAB6 (code generation for functions), APPD 2021-22
+
+# Author
+
+Thomas Pickles
+
+# Contents
+
+./mst-solution.c - source code file
+./tests/data-*.txt -
+./tests/out-*.txt -
 
 
+# Howto
 
-## Speedup
-### Data structures
-- Use queue rather than array of status, then no need to check for each vertices.  Yields speedups when the vast majority of vertices are rejected as avoids repeated checking
-- Union-find: follow pointers, discuss pointer jumping to give logarithmic behaviour.  Can I present a chart to illustrate this?
-- Heaps to keep track of mins per vertex?  Is this too much data to store?
+`make` to build executable
+`make run` to run code on a basic example
+`make tests` to run each algorithm against expected output for a range of system sizes and processor numbers.
+`make performance` to evaluate algorithm performance against a range of criteria.
 
-## Scaling
-### Kruskal vs Prim
-Should (todo: check) be same in theory.  My Prim throws away lots of useful calcs though
+# Dependencies
 
-At what size do we start seeing asymptotic behaviour?  What constant are hidden in the small N behaviour?  Does one method overtake the other?
+mpi
+smpi
 
-### Benefits of parallelism
-what speedups do we see?  do we get to a regime where the inherent sequentialism of one method means that the T_seq/p*T_par (what is this called?)  starts to become a problem?  Can we study this for different values of p, L, \beta?
+# Test design
 
-### Limits of parallelism
-What is optimum p, q?  Is there any reason to favour are particular order of vertices for each processor?  I don't think so, as we're not passing to a previous, next.  When does communication cost become too high?  As a function of bandwidth, latency etc.
+All provided tests pass.
+
+# Design choices
+
+new_offset() function generates a negative offset relative to some base.
+The course notes suggest using a positive offset relative to stack pointer
+to save registers.  To avoid coding another function to generate a positive
+offset I have set the memory locations
+on the stack relative to frame pointer rather than stack pointer.
+
+# Known bugs and limitations
+
+gcc works with 32bits integer, when riscv uses 64bits integer
+Differences in output when result > 2^31.  Accordingly, when calculating 15! using
+a recursive function, MiniC produces the correct result where gcc creates the
+wrong result
+
+Compatibility with gcc is not thoroughly tested.  I have provided compatibility
+tests with gcc in both directions, but these are for very simple functions, so
+this test coverage is currently very basic.  With more time, I would focus on
+extending this test suite.
+
+# Checklists
+
+A check ([X]) means that the feature is implemented
+and *tested* with appropriate test cases.
+
+## Parser
+
+- [x] Function definition
+- [x] Function declaration
+- [x] Function call
+
+## Typer
+
+- [x] Function declaration
+- [x] Function definition
+- [x] Function call
+- [x] Function return
+
+## Code generation
+
+- [x] Function return
+- [x] Callee-saved registers
+- [x] Function call
+- [x] Getting the result of a function call
+- [x] Caller-saved registers
+- [x] Increase the size of the stack for callee/caller-saved registers
+- [x] Temporaries for giving arguments to a function call
+- [x] Temporaries for retriving arguments at the beginning of a function
 
 
-todo: vertex rather than node
-Parallel, does p always divide n exactly?

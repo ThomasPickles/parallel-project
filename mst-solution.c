@@ -374,10 +374,6 @@ void compute_mst(
   MPI_Comm_rank(MPI_COMM_WORLD, &proc_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nb_procs);
 
-  // todo: interesting idea is assigning "levels" for the edges,
-  // BRANCH, REJECTED, BASIC, so we can mark the rejected eges
-  // and the unseen ones
-
   // TODO: CONVERT INTs TO UNSIGNED INT
   if (strcmp(algo_name, "prim-seq") == 0)
   { // Sequential Prim's algorithm

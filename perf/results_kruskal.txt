@@ -1,0 +1,31 @@
+writing data for N=10000
+procs: 1
+compute_mst took 1.000000e-08 seconds.
+procs: 2
+compute_mst took 5.197343e-02 seconds.
+procs: 4
+compute_mst took 7.795884e-02 seconds.
+procs: 8
+compute_mst took 9.096059e-02 seconds.
+procs: 16
+compute_mst took 9.747955e-02 seconds.
+procs: 32
+compute_mst took 1.007700e-01 seconds.
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+o_procs,o_time
+1,compute_mst,took,1.000000e-08,seconds.
+2,compute_mst,took,5.342563e-04,seconds.
+4,compute_mst,took,8.000794e-04,seconds.
+8,compute_mst,took,9.420350e-04,seconds.
+16,compute_mst,took,1.030581e-03,seconds.
+32,compute_mst,took,1.111030e-03,seconds.

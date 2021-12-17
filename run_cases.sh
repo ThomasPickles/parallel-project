@@ -2,7 +2,7 @@
 
 # todo: expand these test cases
 algos=('prim' 'kruskal')
-nodes=('05' '06' '100')
+nodes=('05' '06' '100' '1000')
 proc_number=('1' '2' '3')
 
 for alg in "${algos[@]}"; do
@@ -17,8 +17,9 @@ for alg in "${algos[@]}"; do
         fi
         actual="./tests/out-$n-$alg-$f-$p.txt"
         touch $actual
+        mpirun -np $p ./mst $data $alg-$f > $actual
         if [ -e $expected ]; then
-            mpirun -np $p ./mst $data $alg-$f > $actual
+            echo "$actual vs $expected"
             diff -wq $actual $expected
             nomatch=$(sort $actual $expected | uniq -u | wc -l)
         [ $nomatch -gt 0 ] && echo "Found ${nomatch} lines different"
